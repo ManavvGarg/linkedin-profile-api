@@ -97,7 +97,7 @@ docker compose up --build        # reads .env
 ### Tests
 
 ```bash
-pytest              # 64 tests, no network access required
+pytest              # 88 tests, no network access required
 ```
 
 ---
@@ -563,7 +563,7 @@ app/
   cache.py       TTL cache
   errors.py      Typed errors with remediation text
   fixtures/      Synthetic Voyager payload for offline demos
-tests/           64 tests, no network required
+tests/           88 tests, no network required
 ```
 
 ## License
