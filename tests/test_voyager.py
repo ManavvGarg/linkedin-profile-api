@@ -197,3 +197,98 @@ def test_socks5h_proxy_is_accepted():
 def test_auto_mode_resolves_by_whether_a_session_exists():
     assert Settings(fetch_mode="auto", linkedin_li_at="").effective_mode == "fixture"
     assert Settings(fetch_mode="auto", linkedin_li_at="a" * 60).effective_mode == "live"
+
+
+# --- API-first ordering ----------------------------------------------------
+#
+# The brief requires a solution that hits LinkedIn's endpoints directly with no
+# browser. These pin the stronger property: the normal path is JSON API calls
+# only, with no page fetch at all. Version discovery reads a page, so it must
+# stay a last resort rather than a routine step.
+
+
+def test_happy_path_makes_no_page_fetch(client, monkeypatch):
+    """One JSON call, zero HTML fetches."""
+    json_calls: list[str] = []
+    page_calls: list[str] = []
+
+    monkeypatch.setattr(
+        client, "_get_json", lambda url, **kw: json_calls.append(url) or {"included": []}
+    )
+    monkeypatch.setattr(
+        client, "_request", lambda url, **kw: page_calls.append(url) or make_response(200)
+    )
+
+    result = client.fetch_profile("someone")
+
+    assert len(json_calls) == 1, "should settle on the first known decoration"
+    assert "/voyager/api/identity/dash/profiles" in json_calls[0]
+    assert page_calls == [], "the normal path must not fetch a profile page"
+    assert result.status_code == 200
+
+
+def test_legacy_profileview_is_never_called(client, monkeypatch):
+    """profileView has answered 410 since late 2025; calling it wastes budget."""
+    urls: list[str] = []
+    monkeypatch.setattr(client, "_get_json", lambda url, **kw: urls.append(url) or {"included": []})
+    monkeypatch.setattr(client, "_request", lambda url, **kw: make_response(200))
+
+    client.fetch_profile("someone")
+
+    assert not any("profileView" in u for u in urls)
+
+
+def test_discovery_only_runs_after_every_known_version_fails(client, monkeypatch):
+    """Self-healing, but not at the cost of a page fetch on every lookup."""
+    from app.voyager import _KNOWN_DECORATIONS
+
+    attempts: list[str] = []
+    discovered: list[str] = []
+
+    def failing_json(url, **kw):
+        attempts.append(url)
+        raise SchemaDrift("simulated version drift")
+
+    def fake_discover(public_id):
+        discovered.append(public_id)
+        return None, None
+
+    monkeypatch.setattr(client, "_get_json", failing_json)
+    monkeypatch.setattr(client, "discover_versions", fake_discover)
+
+    with pytest.raises(SchemaDrift):
+        client.fetch_profile("someone")
+
+    assert len(attempts) == len(_KNOWN_DECORATIONS), "every known version should be tried"
+    assert discovered == ["someone"], "discovery should run exactly once, after the failures"
+
+
+def test_auth_errors_are_not_retried_against_other_versions(client, monkeypatch):
+    """A dead session is not version drift — retrying wastes rate budget."""
+    attempts: list[str] = []
+
+    def expired(url, **kw):
+        attempts.append(url)
+        raise SessionExpired("dead session")
+
+    monkeypatch.setattr(client, "_get_json", expired)
+
+    with pytest.raises(SessionExpired):
+        client.fetch_profile("someone")
+
+    assert len(attempts) == 1, "should abort immediately rather than trying more versions"
+
+
+def test_rate_limit_aborts_immediately(client, monkeypatch):
+    attempts: list[str] = []
+
+    def limited(url, **kw):
+        attempts.append(url)
+        raise RateLimited("slow down")
+
+    monkeypatch.setattr(client, "_get_json", limited)
+
+    with pytest.raises(RateLimited):
+        client.fetch_profile("someone")
+
+    assert len(attempts) == 1

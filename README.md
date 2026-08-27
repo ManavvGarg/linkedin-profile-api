@@ -32,6 +32,47 @@ curl "https://<your-deployment>/v1/profile?url=https://www.linkedin.com/in/willi
 
 ---
 
+## How it works, in one paragraph
+
+This is a **pure HTTP client against LinkedIn's private JSON API**. It sends a
+`GET` to `/voyager/api/identity/dash/profiles` with a session cookie and a CSRF header,
+and parses the JSON that comes back. **There is no browser anywhere in it** — no
+Selenium, no Playwright, no Puppeteer, no headless Chrome, no rendering engine, no
+JavaScript execution, and no subprocess. The entire network surface is two
+`curl_cffi.requests.get` call sites.
+
+| | |
+|---|---|
+| Transport | `curl_cffi` — libcurl bindings. An HTTP library, not a browser. |
+| Primary endpoint | `GET /voyager/api/identity/dash/profiles?q=memberIdentity&…` |
+| Supporting endpoints | `/identity/profiles/{id}/skills`, `/identity/profiles/{id}/networkinfo`, `/voyager/api/me` |
+| Auth | `li_at` cookie + `csrf-token` header (reverse-engineered from LinkedIn's own frontend) |
+| Response format | `application/vnd.linkedin.normalized+json+2.1` |
+| Browser dependencies | **none** |
+
+**On `curl_cffi` specifically:** it is used instead of `requests` because it reproduces
+Chrome's *TLS handshake* fingerprint. That is a property of the socket — the ordering of
+cipher suites and extensions in the ClientHello — not a browser. It renders nothing and
+runs no JavaScript. It matters because a non-browser TLS fingerprint on an authenticated
+Voyager call is reported to invalidate the session cookie outright.
+
+**One caveat, stated plainly.** There are two places the code can issue a plain `GET`
+against an HTML page rather than a JSON endpoint. Both are still direct HTTP with no
+browser, and neither is on the normal path:
+
+1. **Endpoint-version discovery** — only after *every* known `decorationId` has failed,
+   the client fetches a profile page and regexes out the current version, then retries
+   the JSON API. This is self-healing for when LinkedIn rotates the version. On the
+   normal path it never runs; `tests/test_voyager.py` asserts the happy path makes zero
+   page fetches.
+2. **`ENABLE_GUEST_FALLBACK`** — a degraded logged-out path, **off by default**, which
+   returns heavily redacted data. It exists to answer "what if there is no session", and
+   is documented at [The logged-out fallback](#the-logged-out-fallback). Delete
+   `app/guest.py` and the flag if a strictly API-only build is preferred; nothing on the
+   authenticated path depends on it.
+
+---
+
 ## Table of contents
 
 - [Quick start](#quick-start) · [Configuration](#configuration) · [API reference](#api-reference)
@@ -97,7 +138,7 @@ docker compose up --build        # reads .env
 ### Tests
 
 ```bash
-pytest              # 88 tests, no network access required
+pytest              # 93 tests, no network access required
 ```
 
 ---
@@ -396,13 +437,20 @@ upstream drift first shows up.
 Voyager is undocumented, unversioned, and changes without notice. This service is built to
 degrade honestly rather than to pretend otherwise.
 
-**Endpoint versions are discovered, not hardcoded.** Voyager's `decorationId` carries a
-version suffix that LinkedIn rotates — `FullProfileWithEntities-91` and `-93` were both
-live in different codebases simultaneously. Hardcoding one is why scrapers break on a
-Tuesday. `VoyagerClient.discover_versions` reads the current value out of an authenticated
-page's own JavaScript, caches it, and falls back to a known-good list only if discovery
-fails. LinkedIn's own frontend necessarily contains the version it is calling, which makes
-the page the most reliable source available.
+**Endpoint versions self-heal.** Voyager's `decorationId` carries a version suffix that
+LinkedIn rotates — `FullProfileWithEntities-91` and `-93` were both live in different
+codebases simultaneously. Hardcoding one is why scrapers break on a Tuesday.
+
+The client tries its known versions against the JSON API first, so the normal path is a
+single API call and nothing else. Only when *every* known version has failed in a
+drift-shaped way does it fetch a profile page, regex out the version LinkedIn's own
+frontend is currently calling, and retry the API with it — then log the new value so it
+can be promoted into `_KNOWN_DECORATIONS`.
+
+That ordering is deliberate: discovery-first would be marginally more robust but would
+add an HTML fetch and a second round trip to every single lookup, against a rate budget
+that is already the binding constraint. Recovery is worth one slow request the day
+LinkedIn rotates a version; it is not worth a permanent tax on every request.
 
 **Drift is loud.** A payload we do not recognise raises `upstream_schema_drift` rather
 than returning a half-empty profile. A silently-empty `experience` array is far more
@@ -563,7 +611,7 @@ app/
   cache.py       TTL cache
   errors.py      Typed errors with remediation text
   fixtures/      Synthetic Voyager payload for offline demos
-tests/           88 tests, no network required
+tests/           93 tests, no network required
 ```
 
 ## License

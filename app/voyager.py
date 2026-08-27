@@ -7,12 +7,17 @@ to pretend stability it does not have.
 
 Two design points worth calling out:
 
-**Endpoint versions are discovered, not hardcoded.** Voyager's `decorationId`
-and GraphQL `queryId` carry version suffixes that LinkedIn rotates
-(`FullProfileWithEntities-91` and `-93` were both live in different codebases at
-the same time). Hardcoding one is why scrapers break on a Tuesday. This client
-reads the current value out of an authenticated page's own JavaScript and
-caches it, falling back to a known-good list only if discovery fails.
+Everything here is a plain HTTP request against a JSON endpoint. There is no
+browser, no rendering engine and no JavaScript execution anywhere in this
+client — `curl_cffi` is an HTTP library that reproduces Chrome's TLS handshake
+fingerprint, which is a property of the socket, not a browser.
+
+**Endpoint versions self-heal.** Voyager's `decorationId` and GraphQL `queryId`
+carry version suffixes that LinkedIn rotates (`FullProfileWithEntities-91` and
+`-93` were both live in different codebases simultaneously). Hardcoding one is
+why scrapers break on a Tuesday. Known versions are tried against the API first,
+so the normal path is a single JSON call; only when all of them fail does the
+client read the current version out of a profile page and retry.
 
 **Status codes do not mean what they look like.** Mapped explicitly in
 `_classify`, because the intuitive reading is wrong in three of the five cases.
@@ -47,9 +52,10 @@ logger = logging.getLogger(__name__)
 BASE = "https://www.linkedin.com"
 VOYAGER = f"{BASE}/voyager/api"
 
-# Used only when live discovery fails. Ordered newest-first; these WILL go stale,
-# which is precisely why discovery exists.
-_FALLBACK_DECORATIONS = (
+# Tried in order against the JSON API before anything else. LinkedIn rotates
+# this version suffix, so these WILL go stale — which is why the client can
+# discover the current one and self-heal. Newest first.
+_KNOWN_DECORATIONS = (
     "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-93",
     "com.linkedin.voyager.dash.deco.identity.profile.FullProfileWithEntities-91",
 )
@@ -203,81 +209,68 @@ class VoyagerClient:
 
         return payload
 
-    # --- version discovery --------------------------------------------------
-
-    def discover_versions(self, public_id: str) -> tuple[str | None, str | None]:
-        """Read the live decorationId and GraphQL queryId off a profile page.
-
-        LinkedIn's own JavaScript necessarily contains the versions its own
-        frontend is calling, which makes the page the single most reliable
-        source for them. Cached for the client's lifetime.
-        """
-        if self._decoration or self._query_id:
-            return self._decoration, self._query_id
-
-        url = f"{BASE}/in/{quote(public_id)}/"
-        try:
-            response = self._request(
-                url, headers=browser_headers(self._session.user_agent)
-            )
-        except Exception as exc:  # discovery is best-effort by design
-            logger.warning("Version discovery request failed: %s", exc)
-            return None, None
-
-        if response.status_code != 200:
-            logger.warning(
-                "Version discovery got HTTP %s; falling back to known decoration ids.",
-                response.status_code,
-            )
-            return None, None
-
-        html = response.text or ""
-        if match := _DECORATION_RE.search(html):
-            self._decoration = match.group(0)
-            logger.info("Discovered decorationId %s", self._decoration)
-        if match := _QUERY_ID_RE.search(html):
-            self._query_id = match.group(0)
-            logger.info("Discovered queryId %s", self._query_id)
-
-        return self._decoration, self._query_id
-
-    def _decoration_candidates(self, public_id: str) -> list[str]:
-        discovered, _ = self.discover_versions(public_id)
-        candidates = [discovered] if discovered else []
-        candidates.extend(d for d in _FALLBACK_DECORATIONS if d != discovered)
-        return candidates
-
     # --- profile endpoints --------------------------------------------------
 
+    def _try_dash_profiles(self, public_id: str, decoration: str) -> VoyagerResponse:
+        encoded = quote(public_id, safe="")
+        url = (
+            f"{VOYAGER}/identity/dash/profiles"
+            f"?q=memberIdentity&memberIdentity={encoded}&decorationId={decoration}"
+        )
+        payload = self._get_json(url, endpoint="dash/profiles", referer=public_id)
+        self._session.mark(SessionState.VALID)
+        return VoyagerResponse(
+            payload=payload, endpoint=f"dash/profiles[{decoration}]", status_code=200
+        )
+
     def fetch_profile(self, public_id: str) -> VoyagerResponse:
-        """Fetch the main profile blob, trying each known strategy in turn.
+        """Fetch the main profile blob.
+
+        Order matters. Known `decorationId` versions are tried against the JSON
+        API first, so the normal path is API calls only — no page fetch, and one
+        request rather than two. Only when every known version has failed in a
+        drift-shaped way does the client fall back to reading the current
+        version out of a profile page, then retry the API with it.
+
+        That keeps the common case pure API while retaining the ability to
+        self-heal when LinkedIn rotates the version, which it does.
 
         The legacy `profileView` endpoint is deliberately absent: it was retired
-        around September 2025 and now answers 410. Calling it would only add a
-        wasted round trip against the rate budget.
+        around September 2025 and now answers 410. Calling it would only waste a
+        round trip against the rate budget.
         """
         errors: list[str] = []
-        encoded = quote(public_id, safe="")
 
-        for decoration in self._decoration_candidates(public_id):
-            url = (
-                f"{VOYAGER}/identity/dash/profiles"
-                f"?q=memberIdentity&memberIdentity={encoded}&decorationId={decoration}"
-            )
+        # 1 — the normal path: known versions, JSON API only.
+        for decoration in _KNOWN_DECORATIONS:
             try:
-                payload = self._get_json(url, endpoint="dash/profiles", referer=public_id)
-                self._session.mark(SessionState.VALID)
-                return VoyagerResponse(
-                    payload=payload, endpoint=f"dash/profiles[{decoration}]", status_code=200
-                )
+                return self._try_dash_profiles(public_id, decoration)
             except (EndpointRetired, SchemaDrift, ProfileNotFound) as exc:
-                # Only decoration-shaped failures are worth retrying with the
-                # next candidate; auth and rate errors propagate immediately.
+                # Only version-shaped failures are worth another candidate;
+                # auth and rate-limit errors propagate immediately.
                 errors.append(f"{decoration}: {exc}")
-                continue
 
-        _, query_id = self.discover_versions(public_id)
+        # 2 — self-heal: every known version failed, so find the current one.
+        logger.warning(
+            "All %d known decorationId versions failed; attempting version discovery.",
+            len(_KNOWN_DECORATIONS),
+        )
+        decoration, query_id = self.discover_versions(public_id)
+
+        if decoration and decoration not in _KNOWN_DECORATIONS:
+            try:
+                response = self._try_dash_profiles(public_id, decoration)
+                logger.info(
+                    "Recovered using discovered decorationId %s. Consider adding it to "
+                    "_KNOWN_DECORATIONS to avoid the discovery round trip.",
+                    decoration,
+                )
+                return response
+            except (EndpointRetired, SchemaDrift, ProfileNotFound) as exc:
+                errors.append(f"{decoration} (discovered): {exc}")
+
         if query_id:
+            encoded = quote(public_id, safe="")
             url = (
                 f"{VOYAGER}/graphql?includeWebMetadata=true"
                 f"&variables=(vanityName:{encoded})&queryId={query_id}"
@@ -292,10 +285,47 @@ class VoyagerClient:
                 errors.append(f"graphql: {exc}")
 
         raise SchemaDrift(
-            "Every known profile endpoint failed. LinkedIn's internal API has most "
-            "likely changed shape.",
+            "Every known profile endpoint failed, and version discovery did not "
+            "recover. LinkedIn's internal API has most likely changed shape.",
             detail={"attempts": errors},
         )
+
+    # --- version discovery (fallback only) ----------------------------------
+
+    def discover_versions(self, public_id: str) -> tuple[str | None, str | None]:
+        """Read the current decorationId and GraphQL queryId off a profile page.
+
+        Used only after every known version has failed. LinkedIn's own
+        JavaScript necessarily names the versions its frontend is calling, which
+        makes the page the most reliable source for them.
+
+        This is a plain HTTP GET parsed with a regex — no browser, no rendering,
+        no JavaScript execution. Result is cached for the client's lifetime so
+        the cost is paid at most once.
+        """
+        if self._decoration or self._query_id:
+            return self._decoration, self._query_id
+
+        url = f"{BASE}/in/{quote(public_id)}/"
+        try:
+            response = self._request(url, headers=browser_headers(self._session.user_agent))
+        except Exception as exc:  # discovery is best-effort by design
+            logger.warning("Version discovery request failed: %s", exc)
+            return None, None
+
+        if response.status_code != 200:
+            logger.warning("Version discovery got HTTP %s.", response.status_code)
+            return None, None
+
+        html = response.text or ""
+        if match := _DECORATION_RE.search(html):
+            self._decoration = match.group(0)
+            logger.info("Discovered decorationId %s", self._decoration)
+        if match := _QUERY_ID_RE.search(html):
+            self._query_id = match.group(0)
+            logger.info("Discovered queryId %s", self._query_id)
+
+        return self._decoration, self._query_id
 
     def fetch_skills(self, public_id: str) -> dict[str, Any] | None:
         """Skills, which the main blob often truncates. Best-effort."""
