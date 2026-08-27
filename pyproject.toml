@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "linkedin-profile-api"
 version = "1.0.0"
@@ -19,6 +23,16 @@ dev = [
     "httpx>=0.27",
     "ruff>=0.7",
 ]
+
+# Declared explicitly rather than relying on auto-discovery: discovery silently
+# produces an EMPTY distribution when the source tree is not present at build
+# time, which is easy to do in a Dockerfile and hard to notice, since the app
+# still runs by importing from the working directory.
+[tool.setuptools]
+packages = ["app"]
+
+[tool.setuptools.package-data]
+app = ["fixtures/*.json"]
 
 [tool.ruff]
 line-length = 100

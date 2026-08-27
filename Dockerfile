@@ -8,10 +8,13 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /srv
 
+# Source is copied BEFORE install. Installing with only pyproject.toml present
+# builds an empty wheel — the dependencies land, but the `app` package does not,
+# and the container then runs only because uvicorn imports from the working
+# directory. That works until something runs from a different cwd.
 COPY pyproject.toml ./
-RUN pip install --upgrade pip && pip install .
-
 COPY app ./app
+RUN pip install --upgrade pip && pip install --no-cache-dir .
 
 # Run unprivileged.
 RUN useradd --create-home --shell /usr/sbin/nologin appuser \
