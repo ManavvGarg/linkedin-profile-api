@@ -1,0 +1,11 @@
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    # Secrets come from .env, which is gitignored. Never inline them here.
+    env_file:
+      - .env
+    environment:
+      PORT: 8000
+    restart: unless-stopped

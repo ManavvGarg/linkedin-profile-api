@@ -1,0 +1,36 @@
+# Fly.io. Deploy:
+#   fly launch --no-deploy
+#   fly secrets set LINKEDIN_LI_AT=... API_KEYS=...
+#   fly deploy
+app = "linkedin-profile-api"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8000"
+  FETCH_MODE = "auto"
+  CACHE_TTL_SECONDS = "86400"
+  ENABLE_GUEST_FALLBACK = "false"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # Keep one machine warm: the in-process cache is the main defence against
+  # spending LinkedIn rate budget, and a cold start throws it away.
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/v1/health"
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

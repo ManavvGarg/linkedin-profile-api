@@ -1,0 +1,28 @@
+# Render blueprint. Deploy: push this repo, then New > Blueprint on Render.
+#
+# Note the caveat in the README about datacenter egress: LinkedIn's `www` host
+# refuses guest requests from cloud IP ranges outright. Authenticated Voyager
+# calls are a separate path and generally work, but if this deployment sees
+# blocks, set PROXY_URL to a residential proxy.
+services:
+  - type: web
+    name: linkedin-profile-api
+    runtime: docker
+    plan: starter
+    healthCheckPath: /v1/health
+    envVars:
+      # sync: false => set in the Render dashboard, never committed here.
+      - key: LINKEDIN_LI_AT
+        sync: false
+      - key: LINKEDIN_USER_AGENT
+        sync: false
+      - key: API_KEYS
+        sync: false
+      - key: PROXY_URL
+        sync: false
+      - key: FETCH_MODE
+        value: auto
+      - key: CACHE_TTL_SECONDS
+        value: "86400"
+      - key: ENABLE_GUEST_FALLBACK
+        value: "false"

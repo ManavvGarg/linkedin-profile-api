@@ -1,0 +1,26 @@
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+*.pem
+cookies.json
+session_state.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Captured live responses used for debugging (may contain personal data)
+captures/
+*.raw.json
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
