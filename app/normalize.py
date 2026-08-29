@@ -95,24 +95,75 @@ def _deref(index: dict[str, dict[str, Any]], ref: Any) -> dict[str, Any] | None:
     return None
 
 
+def _collection_urns(index: dict[str, dict[str, Any]], ref: Any) -> list[str]:
+    """Expand a section reference into an ordered list of entity URNs.
+
+    A section pointer is rarely a plain list. In live payloads it is usually a
+    *string* URN naming a CollectionResponse, whose `*elements` holds the real
+    URNs in display order. A resolver that only understands lists silently skips
+    it and falls back to `included` order — which is not display order, so the
+    output looks plausible and is wrong.
+    """
+    if isinstance(ref, str):
+        entity = index.get(ref)
+        if entity is None:
+            return []
+        elements = entity.get("*elements") or entity.get("elements")
+        if isinstance(elements, list):
+            return [e for e in elements if isinstance(e, str)]
+        return [ref]  # a direct entity reference, not a collection
+    if isinstance(ref, dict):
+        elements = ref.get("*elements") or ref.get("elements")
+        if isinstance(elements, list):
+            return [e for e in elements if isinstance(e, str)]
+    if isinstance(ref, list):
+        return [e for e in ref if isinstance(e, str)]
+    return []
+
+
+# A PositionGroup bundles the roles held at one company. The roles themselves
+# hang off this key — note the singular "Position": guessing the plural form
+# yields None and costs you the ordering.
+_GROUP_POSITIONS_KEY = "*profilePositionInPositionGroup"
+
+
+def _expand_position_groups(
+    entities: list[dict[str, Any]], index: dict[str, dict[str, Any]]
+) -> list[dict[str, Any]]:
+    """Flatten PositionGroups into their constituent Positions, order preserved.
+
+    LinkedIn groups consecutive roles at the same employer. The group carries
+    the company and the outer date range; the individual roles carry titles and
+    descriptions, so the Positions are what we want — reached through the group
+    to inherit its ordering.
+    """
+    out: list[dict[str, Any]] = []
+    for entity in entities:
+        if _type_leaf(entity) != "PositionGroup":
+            out.append(entity)
+            continue
+        for urn in _collection_urns(index, entity.get(_GROUP_POSITIONS_KEY)):
+            if position := index.get(urn):
+                out.append(position)
+    return out
+
+
 def ordered_refs(
     owner: dict[str, Any] | None,
     index: dict[str, dict[str, Any]],
     *field_names: str,
 ) -> list[dict[str, Any]]:
-    """Resolve a `*field` reference list, preserving LinkedIn's own ordering."""
+    """Resolve a section reference, preserving LinkedIn's own ordering."""
     if not owner:
         return []
     for name in field_names:
         for key in (f"*{name}", name):
-            raw = owner.get(key)
-            if isinstance(raw, dict):
-                raw = raw.get("*elements") or raw.get("elements")
-            if isinstance(raw, list) and raw:
-                resolved = [_deref(index, r) for r in raw]
-                found = [r for r in resolved if r]
-                if found:
-                    return found
+            if key not in owner:
+                continue
+            urns = _collection_urns(index, owner[key])
+            resolved = [index.get(u) for u in urns]
+            if found := [r for r in resolved if r]:
+                return _expand_position_groups(found, index)
     return []
 
 
@@ -447,15 +498,139 @@ def _courses(entities: list[dict[str, Any]]) -> list[Course]:
     ]
 
 
+def _resolve_location(root: dict[str, Any], index: dict[str, dict[str, Any]]) -> Location | None:
+    """Rebuild the display location from Voyager's nested geo entities.
+
+    The shape is two hops, not one: `geoLocation` is a wrapper carrying a `*geo`
+    reference, and the Geo entity it points at carries a `*country` reference to
+    a second Geo. Dereferencing `geoLocation` directly yields the wrapper, whose
+    only useful content is the pointer — which is how this silently returned
+    null against real data.
+
+    City and country also live on different entities, so "Seattle, Washington"
+    and "United States" have to be recombined into the string LinkedIn displays.
+    """
+    text = _as_str(root.get("locationName")) or _as_str(root.get("geoLocationName"))
+    country_code = None
+    country_name = None
+
+    # `location` is a sibling of `geoLocation` and is where the country code lives.
+    loc_obj = root.get("location")
+    if isinstance(loc_obj, dict):
+        country_code = _as_str(loc_obj.get("countryCode"))
+
+    geo_wrapper = root.get("geoLocation")
+    geo_ref = geo_wrapper.get("*geo") or geo_wrapper.get("geo") if isinstance(
+        geo_wrapper, dict
+    ) else (root.get("*geoLocation") or root.get("geoLocation"))
+    geo = _deref(index, geo_ref)
+
+    if geo:
+        city = _as_str(geo.get("defaultLocalizedNameWithoutCountryName")) or _as_str(
+            geo.get("defaultLocalizedName")
+        )
+        country = _deref(index, geo.get("*country") or geo.get("country"))
+        if country:
+            country_name = _as_str(country.get("defaultLocalizedName"))
+        if not text:
+            text = ", ".join(p for p in (city, country_name) if p) or None
+
+    if not (text or country_code):
+        return None
+    return Location(
+        text=text,
+        country_code=country_code or _as_str(root.get("countryCode")),
+        postal_code=_as_str(root.get("postalCode")),
+    )
+
+
+def _resolve_industry(root: dict[str, Any], index: dict[str, dict[str, Any]]) -> str | None:
+    """Resolve the industry reference.
+
+    Industry entities key their label as `name`, which the generic string
+    coercion does not look for — it handles `text` and locale maps. Worth
+    resolving explicitly rather than widening that helper, since `name` is
+    ambiguous across entity types.
+    """
+    if direct := _as_str(root.get("industryName")):
+        return direct
+    entity = _deref(index, root.get("*industry") or root.get("industryUrn"))
+    return _as_str(entity.get("name")) if entity else None
+
+
 # --- entry point -----------------------------------------------------------
+
+
+# Section name as LinkedIn spells it -> (Profile field, entity types, builder,
+# whether the builder needs the entity index). Used to merge separately-fetched
+# section collections, since the main profile decoration resolves only positions
+# and educations and leaves the rest as unexpanded pointers.
+SECTION_BUILDERS: dict[str, tuple[str, tuple[str, ...], Any, bool]] = {
+    "profileSkills": ("skills", ("Skill", "ProfileSkill"), _skills, False),
+    "profileCertifications": (
+        "certifications",
+        ("Certification", "ProfileCertification"),
+        _certifications,
+        True,
+    ),
+    "profileLanguages": ("languages", ("Language", "ProfileLanguage"), _languages, False),
+    "profileProjects": ("projects", ("Project", "ProfileProject"), _projects, False),
+    "profileHonors": ("honors", ("Honor", "ProfileHonor"), _honors, False),
+    "profilePublications": (
+        "publications",
+        ("Publication", "ProfilePublication"),
+        _publications,
+        False,
+    ),
+    "profileVolunteerExperiences": (
+        "volunteer",
+        ("VolunteerExperience", "ProfileVolunteerExperience"),
+        _volunteer,
+        False,
+    ),
+    "profileCourses": ("courses", ("Course", "ProfileCourse"), _courses, False),
+}
+
+
+def merge_section(
+    profile: Profile, section: str, payload: dict[str, Any] | None
+) -> str | None:
+    """Merge a separately-fetched section collection into a Profile.
+
+    Returns a warning string if the section could not be parsed, else None.
+    An empty collection is not an error: LinkedIn genuinely returns
+    `paging.total = 0` for sections a member has not filled in.
+    """
+    spec = SECTION_BUILDERS.get(section)
+    if spec is None or not payload:
+        return None
+
+    field, type_leaves, builder, needs_index = spec
+    try:
+        index = build_index(payload)
+        entities = entities_of_type(index, *type_leaves)
+        if not entities:
+            return None
+        built = builder(entities, index) if needs_index else builder(entities)
+        existing = getattr(profile, field)
+        # Keep whatever the main payload already resolved; append only new items.
+        seen = {str(getattr(x, "name", None) or getattr(x, "title", None)) for x in existing}
+        existing.extend(
+            x
+            for x in built
+            if str(getattr(x, "name", None) or getattr(x, "title", None)) not in seen
+        )
+    except Exception as exc:
+        logger.exception("Failed to merge section %s", section)
+        return f"Could not parse the {field} section: {exc}"
+    return None
 
 
 def normalize_profile(
     payload: dict[str, Any],
     *,
     public_id: str,
-    skills_payload: dict[str, Any] | None = None,
-    network_payload: dict[str, Any] | None = None,
+    sections: dict[str, dict[str, Any] | None] | None = None,
 ) -> tuple[Profile, list[str]]:
     """Build a Profile, plus warnings for anything that did not parse cleanly."""
     warnings: list[str] = []
@@ -487,12 +662,8 @@ def normalize_profile(
     last = _as_str(root.get("lastName")) or _as_str(root.get("multiLocaleLastName"))
     full = " ".join(p for p in (first, last) if p) or None
 
-    geo = _deref(index, root.get("*geoLocation") or root.get("geoLocation"))
-    location_text = (
-        _as_str(root.get("locationName"))
-        or _as_str(root.get("geoLocationName"))
-        or (_as_str(geo.get("defaultLocalizedName")) if geo else None)
-    )
+    location = _resolve_location(root, index)
+    industry = _resolve_industry(root, index)
 
     profile = Profile(
         public_id=_as_str(root.get("publicIdentifier")) or public_id,
@@ -503,16 +674,8 @@ def normalize_profile(
         full_name=full,
         headline=_as_str(root.get("headline")) or _as_str(root.get("multiLocaleHeadline")),
         summary=_as_str(root.get("summary")) or _as_str(root.get("about")),
-        location=Location(
-            text=location_text,
-            country_code=_as_str(root.get("countryCode"))
-            or (_as_str(geo.get("countryCode")) if geo else None),
-            postal_code=_as_str(root.get("postalCode")),
-        )
-        if location_text or geo
-        else None,
-        industry=_as_str(root.get("industryName"))
-        or _as_str(_deref(index, root.get("*industry")) or {}),
+        location=location,
+        industry=industry,
         pronouns=_as_str(root.get("pronoun")),
         profile_picture=parse_image(root.get("profilePicture"), index),
         background_picture=parse_image(root.get("backgroundPicture"), index),
@@ -572,15 +735,11 @@ def normalize_profile(
         ),
     )
 
-    if skills_payload:
-        try:
-            extra = _skills(entities_of_type(build_index(skills_payload), "Skill", "ProfileSkill"))
-            known = {s.name.lower() for s in profile.skills}
-            profile.skills.extend(s for s in extra if s.name.lower() not in known)
-        except Exception as exc:
-            warnings.append(f"Could not merge the skills endpoint: {exc}")
+    for name, section_payload in (sections or {}).items():
+        if warning := merge_section(profile, name, section_payload):
+            warnings.append(warning)
 
-    profile.counts = _counts(network_payload, root)
+    profile.counts = _counts(None, root)
 
     if not profile.full_name:
         warnings.append(

@@ -54,6 +54,11 @@ class Settings(BaseSettings):
     api_keys: str = ""
     cors_origins: str = "*"
 
+    # When the main profile payload leaves a promised section empty, spend one
+    # extra request per gap to confirm. Correctness by default; turn off to
+    # keep every lookup to a single upstream call.
+    backfill_empty_sections: bool = True
+
     # Guest fallback. Off by default: the guest path returns asterisk-masked
     # data and burns an IP-wide, multi-hour block after ~5 requests, so it is
     # only worth enabling when partial data genuinely beats no data.

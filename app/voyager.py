@@ -327,22 +327,34 @@ class VoyagerClient:
 
         return self._decoration, self._query_id
 
-    def fetch_skills(self, public_id: str) -> dict[str, Any] | None:
-        """Skills, which the main blob often truncates. Best-effort."""
-        url = f"{VOYAGER}/identity/profiles/{quote(public_id, safe='')}/skills?count=100"
-        try:
-            return self._get_json(url, endpoint="profiles/skills", referer=public_id)
-        except (SchemaDrift, EndpointRetired, ProfileNotFound) as exc:
-            logger.info("Skills endpoint unavailable: %s", exc)
-            return None
+    def fetch_section(
+        self, profile_urn: str, section: str, *, public_id: str, count: int = 100
+    ) -> dict[str, Any] | None:
+        """Fetch one profile section collection.
 
-    def fetch_network_info(self, public_id: str) -> dict[str, Any] | None:
-        """Connection and follower counts. Best-effort."""
-        url = f"{VOYAGER}/identity/profiles/{quote(public_id, safe='')}/networkinfo"
+        The main profile decoration resolves positions and educations but leaves
+        every other section as an unexpanded pointer (`*profileSkills`,
+        `*profileCertifications`, ...). Each has to be fetched by name:
+
+            GET /voyager/api/identity/dash/{section}?q=viewee&profileUrn={urn}
+
+        This replaces the legacy `/identity/profiles/{id}/skills` and
+        `/networkinfo` endpoints, both of which now answer 410 Gone alongside
+        `profileView`. Verified live: the pattern returns 200 with correct
+        paging totals for skills, certifications, languages, honors and
+        positionGroups.
+
+        Best-effort — a missing section degrades the profile rather than
+        failing it.
+        """
+        url = (
+            f"{VOYAGER}/identity/dash/{section}"
+            f"?q=viewee&profileUrn={quote(profile_urn, safe='')}&count={count}"
+        )
         try:
-            return self._get_json(url, endpoint="profiles/networkinfo", referer=public_id)
+            return self._get_json(url, endpoint=f"dash/{section}", referer=public_id)
         except (SchemaDrift, EndpointRetired, ProfileNotFound) as exc:
-            logger.info("Network info endpoint unavailable: %s", exc)
+            logger.info("Section %s unavailable: %s", section, exc)
             return None
 
     def check_session(self) -> SessionState:

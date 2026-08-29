@@ -36,24 +36,66 @@ def profile(payload):
 
 
 def test_experience_follows_reference_order_not_included_order(payload, profile):
-    """`included` is not in display order; the reference list is authoritative.
+    """`included` is not in display order; the collection is authoritative.
 
-    The fixture deliberately places the oldest position first in `included`. A
-    parser that filters by `$type` and trusts that order produces a reversed
-    career with no error raised — data that looks fine and is wrong.
+    The fixture deliberately places a past position first in `included`. A parser
+    that filters by `$type` and trusts that order produces a scrambled career
+    with no error raised — data that looks fine and is wrong. This was a real
+    bug: it survived a fixture that used plain reference lists and only surfaced
+    against live LinkedIn data, which nests everything behind collections.
     """
     included_order = [
         e["title"]
         for e in payload["included"]
         if e.get("$type", "").endswith("profile.Position")
     ]
-    assert included_order[0] == "Software Engineer", "fixture should start out of order"
+    assert included_order[0] != "Principal Engineer", "fixture should start out of order"
 
     assert [e.title for e in profile.experience] == [
         "Principal Engineer",
         "Senior Software Engineer",
         "Software Engineer",
     ]
+
+
+def test_section_pointers_are_collection_urn_strings(payload):
+    """Guards the fixture's fidelity to what LinkedIn actually sends.
+
+    Live payloads point at sections with a CollectionResponse URN *string*, not
+    an inline list. A resolver that only understands lists skips it silently and
+    falls back to `included` order. If this assertion ever fails, the fixture has
+    drifted back to an easier shape than reality and the ordering tests above
+    stop proving anything.
+    """
+    profile_entity = next(
+        e for e in payload["included"] if e.get("$type", "").endswith("profile.Profile")
+    )
+    for pointer in ("*profilePositionGroups", "*profileEducations", "*profileSkills"):
+        ref = profile_entity[pointer]
+        assert isinstance(ref, str), f"{pointer} should be a URN string, not {type(ref)}"
+        assert ref.startswith("urn:li:collectionResponse:")
+
+
+def test_positions_are_reached_through_their_position_group(payload, profile):
+    """Experience is two collections deep, not one.
+
+    Profile -> positionGroups collection -> PositionGroup ->
+    `*profilePositionInPositionGroup` collection -> Position. The singular
+    "Position" in that key is easy to get wrong, and guessing the plural yields
+    None — which drops straight through to unordered output.
+    """
+    groups = [
+        e for e in payload["included"] if e.get("$type", "").endswith("profile.PositionGroup")
+    ]
+    assert groups, "fixture should model position groups"
+    assert all("*profilePositionInPositionGroup" in g for g in groups)
+
+    # The second group holds two roles at one employer; both must be flattened out.
+    northwind = [
+        e for e in profile.experience if e.company and e.company.name == "Northwind Analytics"
+    ]
+    assert len(northwind) == 2
+    assert [e.title for e in northwind] == ["Senior Software Engineer", "Software Engineer"]
 
 
 def test_education_follows_reference_order(payload, profile):
@@ -63,10 +105,30 @@ def test_education_follows_reference_order(payload, profile):
     ]
 
 
-def test_collection_metadata_is_indexed_despite_lacking_entity_urn(payload):
-    """Paging entities key off `$id`, so an entityUrn-only index loses them."""
+def test_entities_keyed_by_dollar_id_are_indexed():
+    """Not every entity carries `entityUrn`; some paging entities use `$id`.
+
+    An index built on `entityUrn` alone drops them silently.
+    """
+    index = build_index(
+        {
+            "included": [
+                {"$type": "com.example.Thing", "entityUrn": "urn:a"},
+                {"$type": "com.example.Meta", "$id": "urn:b", "total": 3},
+            ]
+        }
+    )
+    assert "urn:a" in index
+    assert "urn:b" in index
+
+
+def test_collections_are_indexed_and_resolvable(payload):
+    """The CollectionResponse entities the section pointers name must resolve."""
     index = build_index(payload)
-    assert "urn:li:fsd_collectionMetadata:demo1" in index
+    collections = [k for k in index if k.startswith("urn:li:collectionResponse:")]
+    assert collections, "fixture should contain resolvable collections"
+    for urn in collections:
+        assert "*elements" in index[urn]
 
 
 # --- the falsy-value trap --------------------------------------------------
@@ -114,9 +176,9 @@ def test_empty_date_becomes_none():
 def test_vector_image_reconstructs_every_variant(profile):
     picture = profile.profile_picture
     assert picture is not None
-    assert [v.width for v in picture.variants] == [100, 400, 800]
+    assert [v.width for v in picture.variants] == [100, 200, 400, 800]
     # `url` should be the largest, and rootUrl + path segment concatenated.
-    assert picture.url.endswith("t=demo800")
+    assert picture.url.endswith("t=d800")
     assert picture.url.startswith("https://media.licdn.com/dms/image/v2/DEMO/")
 
 

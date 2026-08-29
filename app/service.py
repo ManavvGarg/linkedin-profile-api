@@ -23,7 +23,7 @@ from .models import (
     RequestMeta,
     SectionProvenance,
 )
-from .normalize import normalize_profile
+from .normalize import merge_section, normalize_profile
 from .resolve import extract_public_id
 from .session import LinkedInSession, SessionState
 from .voyager import VoyagerClient
@@ -31,6 +31,31 @@ from .voyager import VoyagerClient
 logger = logging.getLogger(__name__)
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures"
+
+# Sections the contract promises, mapped to the Profile field they populate.
+# These are fetched individually ONLY when the main profile payload did not
+# already resolve them — every entry is an extra throttled round trip against
+# the scarcest resource in the system, so a request that would duplicate data we
+# already hold is not worth making.
+EXTRA_SECTIONS = {
+    "profileSkills": "skills",
+    "profileCertifications": "certifications",
+    "profileLanguages": "languages",
+}
+
+
+def _profile_urn(payload: dict[str, Any]) -> str | None:
+    """Find the member URN, which the section endpoints key off."""
+    for entity in payload.get("included") or []:
+        if isinstance(entity, dict) and str(entity.get("$type", "")).endswith(".Profile"):
+            if urn := entity.get("entityUrn"):
+                return str(urn)
+    data = payload.get("data")
+    if isinstance(data, dict):
+        elements = data.get("*elements") or data.get("elements")
+        if isinstance(elements, list) and elements and isinstance(elements[0], str):
+            return elements[0]
+    return None
 
 # Sections whose provenance is reported. Keys match Profile field names.
 _SECTION_KEYS = (
@@ -140,8 +165,6 @@ class ProfileService:
 
         try:
             voyager = self._client.fetch_profile(public_id)
-            skills = self._client.fetch_skills(public_id)
-            network = self._client.fetch_network_info(public_id)
         except ProfileAPIError as exc:
             if not allow_guest:
                 raise
@@ -154,16 +177,23 @@ class ProfileService:
                 profile, public_id, requested_url, source="guest_page", warnings=warnings
             )
 
-        profile, warnings = normalize_profile(
-            voyager.payload,
-            public_id=public_id,
-            skills_payload=skills,
-            network_payload=network,
-        )
-        if skills is None:
-            warnings.append("The skills endpoint was unavailable; skills may be incomplete.")
-        if network is None:
-            warnings.append("Connection and follower counts were unavailable.")
+        profile, warnings = normalize_profile(voyager.payload, public_id=public_id)
+
+        # Backfill only what the main payload did not already carry.
+        gaps = [s for s, field in EXTRA_SECTIONS.items() if not getattr(profile, field)]
+        if gaps and self._settings.backfill_empty_sections:
+            urn = _profile_urn(voyager.payload)
+            if urn:
+                for section in gaps:
+                    payload = self._client.fetch_section(urn, section, public_id=public_id)
+                    if payload is None:
+                        warnings.append(f"Could not retrieve the {section} section.")
+                    elif warning := merge_section(profile, section, payload):
+                        warnings.append(warning)
+            else:
+                warnings.append(
+                    "No profile URN was present, so empty sections could not be backfilled."
+                )
 
         return self._build(
             profile,

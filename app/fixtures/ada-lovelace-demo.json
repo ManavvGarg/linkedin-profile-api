@@ -1,57 +1,47 @@
 {
   "_comment": [
-    "A synthetic Voyager response used for demos and tests. The person is",
-    "fictional on purpose: shipping a real individual's profile data in a public",
-    "repository would be a privacy problem regardless of where it came from.",
+    "Synthetic Voyager payload. The person is fictional on purpose: shipping a real",
+    "individual's profile data in a public repository would be a privacy problem.",
     "",
-    "The SHAPE, however, is faithful to what LinkedIn actually returns from",
-    "GET /voyager/api/identity/dash/profiles?q=memberIdentity — Rest.li's",
-    "normalized form, where `data` holds URN references and `included` is a flat",
-    "bag of entities keyed by entityUrn. Note that `included` is deliberately NOT",
-    "in display order here, so the parser's ordering logic is genuinely exercised."
+    "The SHAPE is faithful to a live capture from",
+    "GET /voyager/api/identity/dash/profiles?q=memberIdentity, including the two",
+    "things that break naive parsers:",
+    "  1. Section pointers are CollectionResponse URN *strings*, not lists. The real",
+    "     URNs live in that collection's `*elements`, in display order.",
+    "  2. Experience is nested: Profile -> positionGroups collection -> PositionGroup",
+    "     -> `*profilePositionInPositionGroup` collection -> Position.",
+    "`included` is deliberately NOT in display order, so ordering logic is exercised."
   ],
   "data": {
-    "data": {
-      "identityDashProfilesByMemberIdentity": {
-        "*elements": ["urn:li:fsd_profile:ACoAAADEMO0000"]
-      }
+    "$type": "com.linkedin.restli.common.CollectionResponse",
+    "entityUrn": "urn:li:collectionResponse:DEMORoot",
+    "paging": {
+      "count": 10,
+      "start": 0,
+      "links": []
     },
-    "meta": {}
+    "*elements": [
+      "urn:li:fsd_profile:ACoAAADEMO0000"
+    ]
   },
   "included": [
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Education",
-      "entityUrn": "urn:li:fsd_profileEducation:(ACoAAADEMO0000,2)",
-      "schoolName": "University of Edinburgh",
-      "degreeName": "MSc",
-      "fieldOfStudy": "Computer Science",
-      "grade": "Distinction",
-      "activities": "Robotics Society, ACM Chapter",
-      "description": "Dissertation on probabilistic program synthesis.",
-      "dateRange": { "start": { "year": 2012 }, "end": { "year": 2013 } },
-      "*school": "urn:li:fsd_company:9001"
-    },
-    {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Position",
-      "entityUrn": "urn:li:fsd_profilePosition:(ACoAAADEMO0000,3)",
-      "title": "Software Engineer",
-      "companyName": "Northwind Analytics",
-      "employmentType": "FULL_TIME",
-      "locationName": "Edinburgh, Scotland, United Kingdom",
-      "description": "Built the ingestion pipeline behind the reporting product.",
-      "dateRange": {
-        "start": { "month": 9, "year": 2013 },
-        "end": { "month": 4, "year": 2017 }
+      "$type": "com.linkedin.restli.common.CollectionResponse",
+      "entityUrn": "urn:li:collectionResponse:DEMOG1Pos",
+      "paging": {
+        "count": 1,
+        "start": 0,
+        "total": 1,
+        "links": []
       },
-      "*company": "urn:li:fsd_company:9003"
+      "*elements": [
+        "urn:li:fsd_profilePosition:(ACoAAADEMO0000,1)"
+      ]
     },
     {
-      "$type": "com.linkedin.common.VectorArtifact",
-      "entityUrn": "urn:li:fsd_artifact:demo400",
-      "fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_400_400/demo?e=2147483647&v=beta&t=demo400",
-      "width": 400,
-      "height": 400,
-      "expiresAt": 2147483647000
+      "$type": "com.linkedin.voyager.dash.common.Industry",
+      "entityUrn": "urn:li:fsd_industry:4",
+      "name": "Software Development"
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Profile",
@@ -59,16 +49,28 @@
       "publicIdentifier": "ada-lovelace-demo",
       "firstName": "Ada",
       "lastName": "Lovelace",
+      "multiLocaleFirstName": {
+        "en_US": "Ada"
+      },
+      "multiLocaleLastName": {
+        "en_US": "Lovelace"
+      },
       "headline": "Principal Engineer at Analytical Systems | Distributed systems, data infrastructure",
-      "summary": "Engineer working on distributed data systems.\n\nI spend most of my time on the unglamorous parts of infrastructure: correctness under partial failure, schema evolution, and making on-call survivable. Previously built ingestion and storage layers at two analytics companies.\n\nHappy to talk about consensus protocols, schema migrations, or why your p99 is lying to you.",
-      "locationName": "London, England, United Kingdom",
-      "countryCode": "gb",
-      "industryName": "Software Development",
+      "summary": "Engineer working on distributed data systems.\n\nI spend most of my time on the unglamorous parts of infrastructure: correctness under partial failure, schema evolution, and making on-call survivable.",
       "pronoun": "she/her",
       "premium": true,
       "influencer": false,
       "verified": true,
-      "followersCount": 8421,
+      "location": {
+        "$type": "com.linkedin.voyager.dash.identity.profile.ProfileLocation",
+        "countryCode": "gb"
+      },
+      "geoLocation": {
+        "$type": "com.linkedin.voyager.dash.identity.profile.ProfileGeoLocation",
+        "*geo": "urn:li:fsd_geo:90009496"
+      },
+      "*industry": "urn:li:fsd_industry:4",
+      "industryUrn": "urn:li:fsd_industry:4",
       "profilePicture": {
         "$type": "com.linkedin.voyager.dash.identity.profile.ProfilePicture",
         "displayImageReference": {
@@ -78,21 +80,28 @@
             "artifacts": [
               {
                 "$type": "com.linkedin.common.VectorArtifact",
-                "fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_100_100/demo?e=2147483647&v=beta&t=demo100",
+                "fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_100_100/demo?e=2147483647&v=beta&t=d100",
                 "width": 100,
                 "height": 100,
                 "expiresAt": 2147483647000
               },
               {
                 "$type": "com.linkedin.common.VectorArtifact",
-                "fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_400_400/demo?e=2147483647&v=beta&t=demo400",
+                "fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_200_200/demo?e=2147483647&v=beta&t=d200",
+                "width": 200,
+                "height": 200,
+                "expiresAt": 2147483647000
+              },
+              {
+                "$type": "com.linkedin.common.VectorArtifact",
+                "fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_400_400/demo?e=2147483647&v=beta&t=d400",
                 "width": 400,
                 "height": 400,
                 "expiresAt": 2147483647000
               },
               {
                 "$type": "com.linkedin.common.VectorArtifact",
-                "fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_800_800/demo?e=2147483647&v=beta&t=demo800",
+                "fileIdentifyingUrlPathSegment": "profile-displayphoto-shrink_800_800/demo?e=2147483647&v=beta&t=d800",
                 "width": 800,
                 "height": 800,
                 "expiresAt": 2147483647000
@@ -110,177 +119,293 @@
             "artifacts": [
               {
                 "$type": "com.linkedin.common.VectorArtifact",
-                "fileIdentifyingUrlPathSegment": "profile-background-shrink_1400_425/demo?e=2147483647&v=beta&t=bg1400",
+                "fileIdentifyingUrlPathSegment": "profile-background-shrink_1400_1400/demo?e=2147483647&v=beta&t=d1400",
                 "width": 1400,
-                "height": 425,
+                "height": 1400,
                 "expiresAt": 2147483647000
               }
             ]
           }
         }
       },
-      "*profilePositions": [
-        "urn:li:fsd_profilePosition:(ACoAAADEMO0000,1)",
-        "urn:li:fsd_profilePosition:(ACoAAADEMO0000,2)",
-        "urn:li:fsd_profilePosition:(ACoAAADEMO0000,3)"
-      ],
-      "*profileEducations": [
-        "urn:li:fsd_profileEducation:(ACoAAADEMO0000,1)",
-        "urn:li:fsd_profileEducation:(ACoAAADEMO0000,2)"
-      ],
-      "*profileSkills": [
-        "urn:li:fsd_profileSkill:(ACoAAADEMO0000,1)",
-        "urn:li:fsd_profileSkill:(ACoAAADEMO0000,2)",
-        "urn:li:fsd_profileSkill:(ACoAAADEMO0000,3)",
-        "urn:li:fsd_profileSkill:(ACoAAADEMO0000,4)"
-      ],
-      "*profileCertifications": ["urn:li:fsd_profileCertification:(ACoAAADEMO0000,1)"],
-      "*profileLanguages": [
-        "urn:li:fsd_profileLanguage:(ACoAAADEMO0000,1)",
-        "urn:li:fsd_profileLanguage:(ACoAAADEMO0000,2)"
-      ],
-      "*profileProjects": ["urn:li:fsd_profileProject:(ACoAAADEMO0000,1)"],
-      "*profileHonors": ["urn:li:fsd_profileHonor:(ACoAAADEMO0000,1)"],
-      "*profileVolunteerExperiences": ["urn:li:fsd_profileVolunteer:(ACoAAADEMO0000,1)"],
-      "*profileCourses": ["urn:li:fsd_profileCourse:(ACoAAADEMO0000,1)"],
-      "*profilePublications": ["urn:li:fsd_profilePublication:(ACoAAADEMO0000,1)"]
+      "*profilePositionGroups": "urn:li:collectionResponse:DEMOGroups",
+      "*profileEducations": "urn:li:collectionResponse:DEMOEdu",
+      "*profileSkills": "urn:li:collectionResponse:DEMOSkills",
+      "*profileCertifications": "urn:li:collectionResponse:DEMOCerts",
+      "*profileLanguages": "urn:li:collectionResponse:DEMOLangs"
+    },
+    {
+      "$type": "com.linkedin.voyager.dash.identity.profile.Position",
+      "entityUrn": "urn:li:fsd_profilePosition:(ACoAAADEMO0000,3)",
+      "title": "Software Engineer",
+      "multiLocaleTitle": {
+        "en_US": "Software Engineer"
+      },
+      "companyName": "Northwind Analytics",
+      "*company": "urn:li:fsd_company:9003",
+      "companyUrn": "urn:li:fsd_company:9003",
+      "locationName": "Edinburgh, Scotland, United Kingdom",
+      "description": "Built the ingestion pipeline behind the reporting product.",
+      "dateRange": {
+        "start": {
+          "year": 2013,
+          "$type": "com.linkedin.common.Date",
+          "month": 9
+        },
+        "$type": "com.linkedin.common.DateRange",
+        "end": {
+          "year": 2017,
+          "$type": "com.linkedin.common.Date",
+          "month": 4
+        }
+      },
+      "employmentType": "FULL_TIME",
+      "skills": []
+    },
+    {
+      "$type": "com.linkedin.voyager.dash.identity.profile.PositionGroup",
+      "entityUrn": "urn:li:fsd_profilePositionGroup:(ACoAAADEMO0000,1)",
+      "companyName": "Analytical Systems",
+      "*company": "urn:li:fsd_company:9002",
+      "dateRange": {
+        "start": {
+          "year": 2021,
+          "$type": "com.linkedin.common.Date",
+          "month": 3
+        },
+        "$type": "com.linkedin.common.DateRange"
+      },
+      "*profilePositionInPositionGroup": "urn:li:collectionResponse:DEMOG1Pos"
+    },
+    {
+      "$type": "com.linkedin.voyager.dash.common.Geo",
+      "entityUrn": "urn:li:fsd_geo:90009496",
+      "defaultLocalizedNameWithoutCountryName": "London, England",
+      "*country": "urn:li:fsd_geo:101165590"
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Position",
       "entityUrn": "urn:li:fsd_profilePosition:(ACoAAADEMO0000,1)",
       "title": "Principal Engineer",
+      "multiLocaleTitle": {
+        "en_US": "Principal Engineer"
+      },
       "companyName": "Analytical Systems",
-      "employmentType": "FULL_TIME",
+      "*company": "urn:li:fsd_company:9002",
+      "companyUrn": "urn:li:fsd_company:9002",
       "locationName": "London, England, United Kingdom",
-      "description": "Technical lead for the storage platform. Took the write path from 12k to 140k events/sec without adding hardware, and cut p99 write latency by 60% by replacing the coordination layer.",
-      "dateRange": { "start": { "month": 3, "year": 2021 } },
-      "skills": ["Distributed Systems", "Rust", "PostgreSQL"],
-      "*company": "urn:li:fsd_company:9002"
+      "description": "Technical lead for the storage platform. Took the write path from 12k to 140k events/sec.",
+      "dateRange": {
+        "start": {
+          "year": 2021,
+          "$type": "com.linkedin.common.Date",
+          "month": 3
+        },
+        "$type": "com.linkedin.common.DateRange"
+      },
+      "employmentType": "FULL_TIME",
+      "skills": [
+        "Distributed Systems",
+        "Rust",
+        "PostgreSQL"
+      ]
     },
     {
-      "$type": "com.linkedin.voyager.dash.organization.Company",
-      "entityUrn": "urn:li:fsd_company:9002",
-      "name": "Analytical Systems",
-      "universalName": "analytical-systems-demo",
-      "industry": "Software Development",
-      "staffCount": 340,
-      "logo": {
-        "$type": "com.linkedin.common.VectorImage",
-        "rootUrl": "https://media.licdn.com/dms/image/v2/DEMOCO2/",
-        "artifacts": [
-          {
-            "$type": "com.linkedin.common.VectorArtifact",
-            "fileIdentifyingUrlPathSegment": "company-logo_200_200/demo?e=2147483647&v=beta&t=co200",
-            "width": 200,
-            "height": 200,
-            "expiresAt": 2147483647000
-          }
-        ]
+      "$type": "com.linkedin.voyager.dash.common.Geo",
+      "entityUrn": "urn:li:fsd_geo:101165590",
+      "defaultLocalizedName": "United Kingdom"
+    },
+    {
+      "$type": "com.linkedin.voyager.dash.identity.profile.Education",
+      "entityUrn": "urn:li:fsd_profileEducation:(ACoAAADEMO0000,2)",
+      "schoolName": "University of Edinburgh",
+      "*school": "urn:li:fsd_school:9001",
+      "schoolUrn": "urn:li:fsd_school:9001",
+      "degreeName": "MSc",
+      "fieldOfStudy": "Computer Science",
+      "grade": "Distinction",
+      "activities": "Robotics Society, ACM Chapter",
+      "description": "Dissertation on probabilistic program synthesis.",
+      "dateRange": {
+        "start": {
+          "year": 2012,
+          "$type": "com.linkedin.common.Date"
+        },
+        "$type": "com.linkedin.common.DateRange",
+        "end": {
+          "year": 2013,
+          "$type": "com.linkedin.common.Date"
+        }
       }
     },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Skill",
-      "entityUrn": "urn:li:fsd_profileSkill:(ACoAAADEMO0000,2)",
-      "name": "Rust",
-      "endorsementCount": 41
+      "$type": "com.linkedin.restli.common.CollectionResponse",
+      "entityUrn": "urn:li:collectionResponse:DEMOGroups",
+      "paging": {
+        "count": 2,
+        "start": 0,
+        "total": 2,
+        "links": []
+      },
+      "*elements": [
+        "urn:li:fsd_profilePositionGroup:(ACoAAADEMO0000,1)",
+        "urn:li:fsd_profilePositionGroup:(ACoAAADEMO0000,2)"
+      ]
+    },
+    {
+      "$type": "com.linkedin.restli.common.CollectionResponse",
+      "entityUrn": "urn:li:collectionResponse:DEMOEdu",
+      "paging": {
+        "count": 2,
+        "start": 0,
+        "total": 2,
+        "links": []
+      },
+      "*elements": [
+        "urn:li:fsd_profileEducation:(ACoAAADEMO0000,1)",
+        "urn:li:fsd_profileEducation:(ACoAAADEMO0000,2)"
+      ]
+    },
+    {
+      "$type": "com.linkedin.voyager.dash.identity.profile.PositionGroup",
+      "entityUrn": "urn:li:fsd_profilePositionGroup:(ACoAAADEMO0000,2)",
+      "companyName": "Northwind Analytics",
+      "*company": "urn:li:fsd_company:9003",
+      "dateRange": {
+        "start": {
+          "year": 2013,
+          "$type": "com.linkedin.common.Date",
+          "month": 9
+        },
+        "$type": "com.linkedin.common.DateRange",
+        "end": {
+          "year": 2021,
+          "$type": "com.linkedin.common.Date",
+          "month": 2
+        }
+      },
+      "*profilePositionInPositionGroup": "urn:li:collectionResponse:DEMOG2Pos"
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Position",
       "entityUrn": "urn:li:fsd_profilePosition:(ACoAAADEMO0000,2)",
       "title": "Senior Software Engineer",
-      "companyName": "Northwind Analytics",
-      "employmentType": "FULL_TIME",
-      "locationName": "Remote",
-      "description": "Owned the query engine. Introduced vectorised execution, a 4x speedup on analytical workloads.",
-      "dateRange": {
-        "start": { "month": 5, "year": 2017 },
-        "end": { "month": 2, "year": 2021 }
+      "multiLocaleTitle": {
+        "en_US": "Senior Software Engineer"
       },
-      "skills": ["Query Optimisation", "C++"],
-      "*company": "urn:li:fsd_company:9003"
+      "companyName": "Northwind Analytics",
+      "*company": "urn:li:fsd_company:9003",
+      "companyUrn": "urn:li:fsd_company:9003",
+      "locationName": "Remote",
+      "description": "Owned the query engine. Introduced vectorised execution, a 4x speedup.",
+      "dateRange": {
+        "start": {
+          "year": 2017,
+          "$type": "com.linkedin.common.Date",
+          "month": 5
+        },
+        "$type": "com.linkedin.common.DateRange",
+        "end": {
+          "year": 2021,
+          "$type": "com.linkedin.common.Date",
+          "month": 2
+        }
+      },
+      "employmentType": "FULL_TIME",
+      "skills": [
+        "Query Optimisation",
+        "C++"
+      ]
     },
     {
-      "$type": "com.linkedin.voyager.dash.common.CollectionMetadata",
-      "$id": "urn:li:fsd_collectionMetadata:demo1",
-      "total": 3,
-      "count": 3,
-      "start": 0
-    },
-    {
-      "$type": "com.linkedin.voyager.dash.organization.Company",
-      "entityUrn": "urn:li:fsd_company:9003",
-      "name": "Northwind Analytics",
-      "universalName": "northwind-analytics-demo",
-      "industry": "Data Infrastructure",
-      "staffCount": 120,
-      "logo": {
-        "$type": "com.linkedin.common.VectorImage",
-        "rootUrl": "https://media.licdn.com/dms/image/v2/DEMOCO3/",
-        "artifacts": [
-          {
-            "$type": "com.linkedin.common.VectorArtifact",
-            "fileIdentifyingUrlPathSegment": "company-logo_200_200/demo?e=2147483647&v=beta&t=co3200",
-            "width": 200,
-            "height": 200,
-            "expiresAt": 2147483647000
-          }
-        ]
-      }
+      "$type": "com.linkedin.restli.common.CollectionResponse",
+      "entityUrn": "urn:li:collectionResponse:DEMOG2Pos",
+      "paging": {
+        "count": 2,
+        "start": 0,
+        "total": 2,
+        "links": []
+      },
+      "*elements": [
+        "urn:li:fsd_profilePosition:(ACoAAADEMO0000,2)",
+        "urn:li:fsd_profilePosition:(ACoAAADEMO0000,3)"
+      ]
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Education",
       "entityUrn": "urn:li:fsd_profileEducation:(ACoAAADEMO0000,1)",
       "schoolName": "Imperial College London",
+      "*school": "urn:li:fsd_school:9000",
+      "schoolUrn": "urn:li:fsd_school:9000",
       "degreeName": "BEng",
       "fieldOfStudy": "Computing",
       "grade": "First Class Honours",
       "activities": "Programming Society (President, 2011-2012)",
       "description": null,
-      "dateRange": { "start": { "year": 2008 }, "end": { "year": 2012 } },
-      "*school": "urn:li:fsd_company:9000"
-    },
-    {
-      "$type": "com.linkedin.voyager.dash.organization.Company",
-      "entityUrn": "urn:li:fsd_company:9000",
-      "name": "Imperial College London",
-      "universalName": "imperial-college-london-demo",
-      "logo": {
-        "$type": "com.linkedin.common.VectorImage",
-        "rootUrl": "https://media.licdn.com/dms/image/v2/DEMOSCH/",
-        "artifacts": [
-          {
-            "$type": "com.linkedin.common.VectorArtifact",
-            "fileIdentifyingUrlPathSegment": "company-logo_200_200/demo?e=2147483647&v=beta&t=sch200",
-            "width": 200,
-            "height": 200,
-            "expiresAt": 2147483647000
-          }
-        ]
+      "dateRange": {
+        "start": {
+          "year": 2008,
+          "$type": "com.linkedin.common.Date"
+        },
+        "$type": "com.linkedin.common.DateRange",
+        "end": {
+          "year": 2012,
+          "$type": "com.linkedin.common.Date"
+        }
       }
     },
     {
-      "$type": "com.linkedin.voyager.dash.organization.Company",
-      "entityUrn": "urn:li:fsd_company:9001",
-      "name": "University of Edinburgh",
-      "universalName": "university-of-edinburgh-demo"
+      "$type": "com.linkedin.restli.common.CollectionResponse",
+      "entityUrn": "urn:li:collectionResponse:DEMOSkills",
+      "paging": {
+        "count": 4,
+        "start": 0,
+        "total": 4,
+        "links": []
+      },
+      "*elements": [
+        "urn:li:fsd_skill:1",
+        "urn:li:fsd_skill:2",
+        "urn:li:fsd_skill:3",
+        "urn:li:fsd_skill:4"
+      ]
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Skill",
-      "entityUrn": "urn:li:fsd_profileSkill:(ACoAAADEMO0000,1)",
+      "entityUrn": "urn:li:fsd_skill:1",
       "name": "Distributed Systems",
       "endorsementCount": 87
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Skill",
-      "entityUrn": "urn:li:fsd_profileSkill:(ACoAAADEMO0000,3)",
+      "entityUrn": "urn:li:fsd_skill:2",
+      "name": "Rust",
+      "endorsementCount": 41
+    },
+    {
+      "$type": "com.linkedin.voyager.dash.identity.profile.Skill",
+      "entityUrn": "urn:li:fsd_skill:3",
       "name": "PostgreSQL",
       "endorsementCount": 33
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Skill",
-      "entityUrn": "urn:li:fsd_profileSkill:(ACoAAADEMO0000,4)",
+      "entityUrn": "urn:li:fsd_skill:4",
       "name": "Kubernetes",
       "endorsementCount": 0
+    },
+    {
+      "$type": "com.linkedin.restli.common.CollectionResponse",
+      "entityUrn": "urn:li:collectionResponse:DEMOCerts",
+      "paging": {
+        "count": 1,
+        "start": 0,
+        "total": 1,
+        "links": []
+      },
+      "*elements": [
+        "urn:li:fsd_profileCertification:(ACoAAADEMO0000,1)"
+      ]
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Certification",
@@ -289,7 +414,33 @@
       "authority": "The Linux Foundation",
       "licenseNumber": "CKA-DEMO-1234",
       "url": "https://example.invalid/verify/CKA-DEMO-1234",
-      "dateRange": { "start": { "month": 6, "year": 2022 }, "end": { "month": 6, "year": 2025 } }
+      "dateRange": {
+        "start": {
+          "year": 2022,
+          "$type": "com.linkedin.common.Date",
+          "month": 6
+        },
+        "$type": "com.linkedin.common.DateRange",
+        "end": {
+          "year": 2025,
+          "$type": "com.linkedin.common.Date",
+          "month": 6
+        }
+      }
+    },
+    {
+      "$type": "com.linkedin.restli.common.CollectionResponse",
+      "entityUrn": "urn:li:collectionResponse:DEMOLangs",
+      "paging": {
+        "count": 2,
+        "start": 0,
+        "total": 2,
+        "links": []
+      },
+      "*elements": [
+        "urn:li:fsd_profileLanguage:(ACoAAADEMO0000,1)",
+        "urn:li:fsd_profileLanguage:(ACoAAADEMO0000,2)"
+      ]
     },
     {
       "$type": "com.linkedin.voyager.dash.identity.profile.Language",
@@ -304,44 +455,58 @@
       "proficiency": "PROFESSIONAL_WORKING"
     },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Project",
-      "entityUrn": "urn:li:fsd_profileProject:(ACoAAADEMO0000,1)",
-      "title": "openledger",
-      "description": "An open-source append-only log with deterministic replay.",
-      "url": "https://example.invalid/openledger",
-      "dateRange": { "start": { "month": 1, "year": 2020 } }
+      "$type": "com.linkedin.voyager.dash.organization.Company",
+      "entityUrn": "urn:li:fsd_company:9002",
+      "name": "Analytical Systems",
+      "universalName": "analytical-systems-demo",
+      "industry": "Software Development",
+      "staffCount": 340,
+      "logo": {
+        "$type": "com.linkedin.common.VectorImage",
+        "rootUrl": "https://media.licdn.com/dms/image/v2/DEMOCO/",
+        "artifacts": [
+          {
+            "$type": "com.linkedin.common.VectorArtifact",
+            "fileIdentifyingUrlPathSegment": "company-logo_200_200/demo?e=2147483647&v=beta&t=d200",
+            "width": 200,
+            "height": 200,
+            "expiresAt": 2147483647000
+          }
+        ]
+      }
     },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Publication",
-      "entityUrn": "urn:li:fsd_profilePublication:(ACoAAADEMO0000,1)",
-      "name": "Deterministic Replay for Distributed Debugging",
-      "publisher": "Journal of Systems Practice",
-      "description": "A technique for reproducing distributed failures from production traces.",
-      "url": "https://example.invalid/papers/deterministic-replay",
-      "publishedOn": { "month": 11, "year": 2023 }
+      "$type": "com.linkedin.voyager.dash.organization.Company",
+      "entityUrn": "urn:li:fsd_company:9003",
+      "name": "Northwind Analytics",
+      "universalName": "northwind-analytics-demo",
+      "industry": "Software Development",
+      "staffCount": 120,
+      "logo": {
+        "$type": "com.linkedin.common.VectorImage",
+        "rootUrl": "https://media.licdn.com/dms/image/v2/DEMOCO/",
+        "artifacts": [
+          {
+            "$type": "com.linkedin.common.VectorArtifact",
+            "fileIdentifyingUrlPathSegment": "company-logo_200_200/demo?e=2147483647&v=beta&t=d200",
+            "width": 200,
+            "height": 200,
+            "expiresAt": 2147483647000
+          }
+        ]
+      }
     },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Honor",
-      "entityUrn": "urn:li:fsd_profileHonor:(ACoAAADEMO0000,1)",
-      "title": "Best Paper Award",
-      "issuer": "Systems Practice Conference",
-      "description": "For the deterministic replay paper.",
-      "issuedOn": { "month": 11, "year": 2023 }
+      "$type": "com.linkedin.voyager.dash.organization.School",
+      "entityUrn": "urn:li:fsd_school:9000",
+      "name": "Imperial College London",
+      "universalName": "imperial-demo"
     },
     {
-      "$type": "com.linkedin.voyager.dash.identity.profile.VolunteerExperience",
-      "entityUrn": "urn:li:fsd_profileVolunteer:(ACoAAADEMO0000,1)",
-      "role": "Mentor",
-      "companyName": "Code Club UK",
-      "cause": "EDUCATION",
-      "description": "Weekly programming sessions for secondary school students.",
-      "dateRange": { "start": { "year": 2019 } }
-    },
-    {
-      "$type": "com.linkedin.voyager.dash.identity.profile.Course",
-      "entityUrn": "urn:li:fsd_profileCourse:(ACoAAADEMO0000,1)",
-      "name": "Advanced Distributed Algorithms",
-      "number": "CS6410"
+      "$type": "com.linkedin.voyager.dash.organization.School",
+      "entityUrn": "urn:li:fsd_school:9001",
+      "name": "University of Edinburgh",
+      "universalName": "edinburgh-demo"
     }
   ]
 }
