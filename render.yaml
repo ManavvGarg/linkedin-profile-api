@@ -1,28 +1,68 @@
-# Render blueprint. Deploy: push this repo, then New > Blueprint on Render.
+# Render blueprint. Deploy: Render dashboard -> New -> Blueprint -> pick this repo.
 #
-# Note the caveat in the README about datacenter egress: LinkedIn's `www` host
-# refuses guest requests from cloud IP ranges outright. Authenticated Voyager
-# calls are a separate path and generally work, but if this deployment sees
-# blocks, set PROXY_URL to a residential proxy.
+# Two deployment notes that matter more here than on a typical service:
+#
+# 1. Datacenter egress. LinkedIn's `www` host refuses *logged-out* requests from
+#    cloud IP ranges outright. Authenticated Voyager calls are a different path
+#    and generally work, but if this deployment starts returning
+#    `upstream_blocked`, that is the cause — set PROXY_URL to a residential
+#    proxy (socks5h://, never socks5://).
+#
+# 2. The free plan sleeps after ~15 minutes idle. That costs a ~50s cold start
+#    on the next request AND discards the in-process cache, which is this
+#    service's main defence against LinkedIn's rate limits. Upgrading to
+#    `starter` keeps one instance warm; it is a one-click change in the
+#    dashboard and the single most worthwhile upgrade for this workload.
 services:
   - type: web
     name: linkedin-profile-api
     runtime: docker
-    plan: starter
+    plan: free
+    region: singapore
     healthCheckPath: /v1/health
+
     envVars:
-      # sync: false => set in the Render dashboard, never committed here.
+      # --- secrets: sync:false means "set in the dashboard", never committed ---
+
+      # The LinkedIn session cookie. Optional: leave it unset and callers can
+      # supply their own `session_cookie` per request instead, which keeps any
+      # live credential off this host entirely.
       - key: LINKEDIN_LI_AT
         sync: false
+
+      # Must match the browser the cookie was copied from. LinkedIn invalidates
+      # a session replayed under a mismatched User-Agent.
       - key: LINKEDIN_USER_AGENT
         sync: false
+
+      # Comma-separated keys for this API's own auth. Set this before sharing
+      # the URL: blank means anyone who finds it can spend your LinkedIn rate
+      # budget and get the underlying account restricted.
       - key: API_KEYS
         sync: false
+
+      # Residential proxy, only if LinkedIn blocks this host's egress IP.
       - key: PROXY_URL
         sync: false
+
+      # --- behaviour ---
+
       - key: FETCH_MODE
         value: auto
+      # Chosen to match a current browser; see the UA/TLS alignment check.
+      - key: IMPERSONATE
+        value: chrome150
+      # 4h rather than 24h: fresh enough for a profile API, still absorbing the
+      # repeat lookups a reviewer makes while exploring the schema.
       - key: CACHE_TTL_SECONDS
-        value: "86400"
+        value: "14400"
+      - key: MAX_BATCH_SIZE
+        value: "10"
+      - key: ALLOW_SESSION_OVERRIDE
+        value: "true"
+      - key: BACKFILL_EMPTY_SECTIONS
+        value: "true"
+      # Off by default: the logged-out path returns redacted data and risks an
+      # IP-wide, multi-hour block after roughly five requests.
       - key: ENABLE_GUEST_FALLBACK
         value: "false"
