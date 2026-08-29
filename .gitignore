@@ -24,3 +24,6 @@ captures/
 .DS_Store
 .idea/
 .vscode/
+
+# Personal demo notes — not part of the submission
+DEMO_SCRIPT.md

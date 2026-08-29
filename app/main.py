@@ -39,7 +39,14 @@ empty `skills` array is distinguishable from a redacted one.
 Voyager is undocumented and unversioned. Endpoint shapes change without notice;
 this service reports that as `upstream_schema_drift` rather than quietly
 returning a half-empty profile.
+
+---
+
+Built by **Manav Garg** — [garg.manav1108@gmail.com](mailto:garg.manav1108@gmail.com)
 """
+
+CONTACT = {"name": "Manav Garg", "email": "garg.manav1108@gmail.com"}
+LICENSE_INFO = {"name": "MIT", "url": "https://opensource.org/licenses/MIT"}
 
 _service: ProfileService | None = None
 
@@ -85,6 +92,8 @@ app = FastAPI(
     title="LinkedIn Profile API",
     description=DESCRIPTION,
     version=VERSION,
+    contact=CONTACT,
+    license_info=LICENSE_INFO,
     docs_url="/",
     redoc_url="/redoc",
 )
