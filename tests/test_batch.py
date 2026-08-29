@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import Settings, get_settings
+from app.errors import SessionMissing
 from app.main import app
 from app.service import ProfileService
 
@@ -158,3 +159,55 @@ def test_get_endpoint_has_no_session_cookie_parameter():
 def test_session_cookie_is_not_echoed_back(client):
     body = client.post("/v1/profiles", json={"url": DEMO, "session_cookie": "x" * 60}).json()
     assert "x" * 60 not in str(body)
+
+
+# --- credential precedence -------------------------------------------------
+#
+# The contract: use the caller's cookie when they supply one, otherwise fall
+# back to the server's. These pin all four combinations, including the one that
+# was broken — a server holding no credential of its own.
+
+
+def _service(env_cookie: str = "", fetch_mode: str = "auto") -> ProfileService:
+    return ProfileService(
+        Settings(_env_file=None, fetch_mode=fetch_mode, linkedin_li_at=env_cookie)
+    )
+
+
+def test_falls_back_to_the_env_cookie_when_caller_supplies_none():
+    service = _service(env_cookie="e" * 60, fetch_mode="live")
+    client, namespace = service._client_for(None)
+    assert namespace == "env"
+    assert client._session.active_li_at == "e" * 60
+
+
+def test_callers_cookie_takes_precedence_over_the_env_one():
+    service = _service(env_cookie="e" * 60, fetch_mode="live")
+    client, namespace = service._client_for("u" * 60)
+    assert client._session.active_li_at == "u" * 60, "caller's credential must win"
+    assert namespace != "env"
+
+
+def test_supplied_cookie_enables_live_lookups_with_no_server_credential():
+    """The regression: a server holding no cookie must still honour the caller's.
+
+    With FETCH_MODE=auto and no LINKEDIN_LI_AT, mode resolution used to fall to
+    fixture and silently discard the credential the caller had just supplied.
+    """
+    service = _service(env_cookie="", fetch_mode="auto")
+    assert service._resolve_mode(None) == "fixture", "no credential anywhere -> fixtures"
+    assert service._resolve_mode("u" * 60) == "live", "caller's credential -> live"
+
+
+def test_explicit_fixture_mode_is_not_overridden_by_a_request_cookie():
+    """FETCH_MODE=fixture is a deliberate offline choice; a body cannot undo it."""
+    service = _service(env_cookie="", fetch_mode="fixture")
+    assert service._resolve_mode("u" * 60) == "fixture"
+
+
+def test_no_credential_anywhere_reports_a_useful_error():
+    service = _service(env_cookie="", fetch_mode="live")
+    with pytest.raises(SessionMissing) as excinfo:
+        service._client_for(None)
+    # The message should name both ways out, not just the env var.
+    assert "session_cookie" in str(excinfo.value.remediation)

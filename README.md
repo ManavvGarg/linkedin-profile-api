@@ -138,7 +138,7 @@ docker compose up --build        # reads .env
 ### Tests
 
 ```bash
-pytest              # 110 tests, no network access required
+pytest              # 115 tests, no network access required
 ```
 
 ---
@@ -242,8 +242,24 @@ connection degree changes which fields LinkedIn returns. Sharing one cache
 across credentials would serve one caller wrong data and leak another's. The
 namespace is a hash, so the cookie itself never becomes a cache key.
 
+**Precedence is simple: the caller's cookie wins, the server's is the fallback.**
+
+| Caller sends `session_cookie` | Server has `LINKEDIN_LI_AT` | Result |
+|---|---|---|
+| yes | yes | Caller's session |
+| yes | no  | **Caller's session** — live lookup, no server credential needed |
+| no  | yes | Server's session |
+| no  | no  | Fixture mode, or `session_missing` if `FETCH_MODE=live` |
+
+That second row is the useful one: the server can hold **no LinkedIn credential
+at all** and still serve live data, with each caller spending their own rate
+budget. It is the safest way to deploy this — there is no shared session to burn
+and no one else's credential on the box. An explicit `FETCH_MODE=fixture` still
+wins over everything, since that is a deliberate request for offline behaviour.
+
 Set `ALLOW_SESSION_OVERRIDE=false` to refuse per-request cookies entirely, which
-is the safer posture if the deployment is shared.
+is the safer posture if the deployment holds a credential you do not want
+callers bypassing.
 
 **Accepted URL forms** — all resolve to the same profile:
 
@@ -684,7 +700,7 @@ app/
   cache.py       TTL cache
   errors.py      Typed errors with remediation text
   fixtures/      Synthetic Voyager payload for offline demos
-tests/           110 tests, no network required
+tests/           115 tests, no network required
 ```
 
 ## License

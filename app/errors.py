@@ -78,8 +78,9 @@ class SessionError(ProfileAPIError):
 class SessionMissing(SessionError):
     code = "session_missing"
     remediation = (
-        "No LinkedIn session is configured. Set LINKEDIN_LI_AT, or run with "
-        "FETCH_MODE=fixture to serve bundled sample profiles."
+        "No LinkedIn session is available for this request. Either supply your own "
+        "`session_cookie` in the POST body, configure LINKEDIN_LI_AT on the server, "
+        "or run with FETCH_MODE=fixture to serve bundled sample profiles."
     )
 
 

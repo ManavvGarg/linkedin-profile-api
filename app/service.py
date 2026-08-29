@@ -121,6 +121,24 @@ class ProfileService:
 
     # --- session selection --------------------------------------------------
 
+    def _resolve_mode(self, session_cookie: str | None) -> str:
+        """Decide between a live lookup and the bundled fixtures.
+
+        A caller-supplied credential is itself sufficient to go live, even when
+        the server has none configured. Without this, a deployment that holds no
+        credential of its own — the safer arrangement, since there is no shared
+        session to burn — would resolve `auto` to fixture mode and silently
+        ignore the cookie the caller just handed us.
+
+        An explicit FETCH_MODE=fixture still wins: that is someone deliberately
+        asking for offline behaviour, and a request body should not override it.
+        """
+        if self._settings.fetch_mode == "fixture":
+            return "fixture"
+        if session_cookie:
+            return "live"
+        return self._settings.effective_mode
+
     def _client_for(self, session_cookie: str | None) -> tuple[VoyagerClient, str]:
         """Pick the Voyager client to use, and the cache namespace it owns.
 
@@ -159,7 +177,7 @@ class ProfileService:
         started = time.perf_counter()
         public_id = extract_public_id(url_or_id)
 
-        mode = self._settings.effective_mode
+        mode = self._resolve_mode(session_cookie)
         # Fixture mode never touches a session, so it shares one namespace.
         namespace = "fixture" if mode == "fixture" else None
         client: VoyagerClient | None = None
