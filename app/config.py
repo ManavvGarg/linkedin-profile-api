@@ -2,13 +2,20 @@
 
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 FetchMode = Literal["live", "fixture", "auto"]
+
+
+def _chrome_major(text: str) -> int | None:
+    """Pull a Chrome major version out of a UA string or an impersonate target."""
+    match = re.search(r"[Cc]hrome[/_]?(\d+)", text or "")
+    return int(match.group(1)) if match else None
 
 
 class Settings(BaseSettings):
@@ -19,14 +26,21 @@ class Settings(BaseSettings):
     # LinkedIn session
     linkedin_li_at: str = ""
     linkedin_jsessionid: str = ""
+    # MUST match the browser the li_at cookie was copied from. LinkedIn binds a
+    # session to its browser fingerprint: replaying a cookie under a stale or
+    # mismatched User-Agent reads as session hijacking, and LinkedIn responds by
+    # invalidating the cookie outright — a 302 carrying `li_at=delete me` and
+    # `clear-site-data`. Observed directly with a Chrome/131 UA in 2026.
     linkedin_user_agent: str = (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
-        "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+        "(KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
     )
 
     # Fetch behaviour
     fetch_mode: FetchMode = "auto"
-    impersonate: str = "chrome131"
+    # Keep the major version aligned with linkedin_user_agent; see the validator
+    # below, which refuses a wide mismatch rather than letting it burn a session.
+    impersonate: str = "chrome150"
     proxy_url: str = ""
     min_delay_seconds: float = 2.0
     max_delay_seconds: float = 5.0
@@ -57,6 +71,29 @@ class Settings(BaseSettings):
                 "With socks5:// a resolution failure looks exactly like being blocked."
             )
         return v
+
+    @model_validator(mode="after")
+    def _check_fingerprint_alignment(self) -> Settings:
+        """Refuse a User-Agent and TLS fingerprint that disagree badly.
+
+        These two travel together as one identity. If the UA claims Chrome 150
+        while the TLS handshake is Chrome 131's, the mismatch is visible to
+        LinkedIn and gets the session cookie invalidated on the spot — a failure
+        that surfaces as "logged out" and looks nothing like its cause.
+
+        Only a wide gap is rejected, since curl_cffi ships a coarse set of
+        targets and an exact match is often impossible.
+        """
+        ua_major = _chrome_major(self.linkedin_user_agent)
+        imp_major = _chrome_major(self.impersonate)
+        if ua_major and imp_major and abs(ua_major - imp_major) > 6:
+            raise ValueError(
+                f"LINKEDIN_USER_AGENT reports Chrome {ua_major} but IMPERSONATE is "
+                f"'{self.impersonate}' (Chrome {imp_major}). LinkedIn treats that "
+                "mismatch as session hijacking and will invalidate li_at. Pick an "
+                "IMPERSONATE target close to your browser's real version."
+            )
+        return self
 
     @property
     def api_key_set(self) -> set[str]:
