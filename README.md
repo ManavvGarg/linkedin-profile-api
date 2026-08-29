@@ -138,7 +138,7 @@ docker compose up --build        # reads .env
 ### Tests
 
 ```bash
-pytest              # 93 tests, no network access required
+pytest              # 110 tests, no network access required
 ```
 
 ---
@@ -158,6 +158,9 @@ Every setting is an environment variable; `.env.example` documents them all.
 | `MIN_DELAY_SECONDS` / `MAX_DELAY_SECONDS` | 2 / 5 | Jittered spacing between upstream calls. |
 | `CACHE_TTL_SECONDS` | 86400 | [Load-bearing, not an optimisation](#caching-is-a-correctness-feature). |
 | `API_KEYS` | — | Comma-separated. **Blank means the API is open.** |
+| `MAX_BATCH_SIZE` | 10 | Cap on `POST /v1/profiles`. |
+| `ALLOW_SESSION_OVERRIDE` | `true` | Allow a per-request `session_cookie`. |
+| `BACKFILL_EMPTY_SECTIONS` | `true` | Spend one extra request per section the main payload left empty. |
 | `ENABLE_GUEST_FALLBACK` | `false` | [Off for good reason](#the-logged-out-fallback). |
 
 ---
@@ -172,7 +175,75 @@ Every setting is an environment variable; `.env.example` documents them all.
 | `refresh` | bool | `false` | Bypass the cache. |
 | `allow_guest_fallback` | bool | env | Fall back to the logged-out page on failure. |
 
-`POST /v1/profile` takes the same fields as a JSON body.
+`POST /v1/profile` takes the same fields as a JSON body, plus an optional
+`session_cookie` (see below).
+
+### `POST /v1/profiles` — batch
+
+```bash
+curl -X POST https://<deployment>/v1/profiles \
+  -H 'content-type: application/json' \
+  -d '{"urls": ["https://www.linkedin.com/in/williamhgates", "andrewyng"]}'
+```
+
+Accepts `urls` (a list) **or** `url` (a string), or both — they are merged, so
+one endpoint serves single and batch without the caller special-casing either.
+
+```jsonc
+{
+  "requested": 3, "succeeded": 2, "failed": 1, "duration_ms": 23975,
+  "results": [
+    { "url": "…/in/williamhgates", "status": "ok",    "result": { …full ProfileResponse… }, "error": null },
+    { "url": "andrewyng",          "status": "ok",    "result": { … }, "error": null },
+    { "url": "https://example.com/nope", "status": "error", "result": null,
+      "error": { "code": "invalid_profile_url", "message": "…", "remediation": "…" } }
+  ]
+}
+```
+
+**Every URL succeeds or fails independently.** Branch on the per-item `status`,
+not on the HTTP code — a single dead profile or one rate-limit rejection must
+not discard the profiles that did resolve. The call returns `200` whenever the
+batch itself was well-formed, even if every item inside it failed.
+
+Three things worth knowing before you use it:
+
+- **It is sequential and slow** — budget roughly ten seconds per uncached
+  profile (measured: 24s for two). Lookups are throttled deliberately, because
+  bursts are what get a LinkedIn session restricted. Batching is a convenience,
+  not a way to go faster.
+- **It is capped** at `MAX_BATCH_SIZE` (default 10), returning `413` above that.
+  The cap keeps a cold batch inside the ~60s timeout most proxies impose; a
+  larger one would be killed mid-flight having already spent the rate budget.
+- **Exact duplicate URLs collapse**; two different spellings of the same profile
+  stay two results, and the second is a cache hit rather than a second fetch.
+
+If you need hundreds of profiles, this is the wrong shape — that wants an async
+job API with a job id and polling, which is exactly why PhantomBuster's API
+looks the way it does.
+
+### Supplying your own session
+
+Both POST endpoints accept an optional `session_cookie`, so a caller can spend
+their own LinkedIn rate budget instead of the server's:
+
+```jsonc
+{ "url": "…/in/williamhgates", "session_cookie": "AQEDAT…" }
+```
+
+> ⚠️ That value is a **full LinkedIn login**, not a scoped API key. Send it over
+> HTTPS only. It is never logged and never echoed back, and it is deliberately
+> **not** accepted on the `GET` endpoint — query strings end up in server logs,
+> proxy logs and browser history, which is the wrong place for a credential.
+
+**Cached results are namespaced per credential.** This is a correctness
+requirement, not a nicety: what a session can see depends on who it is, since
+connection degree changes which fields LinkedIn returns. Sharing one cache
+across credentials would serve one caller wrong data and leak another's. The
+namespace is a hash, so the cookie itself never becomes a cache key.
+
+Set `ALLOW_SESSION_OVERRIDE=false` to refuse per-request cookies entirely, which
+is the safer posture if the deployment is shared.
 
 **Accepted URL forms** — all resolve to the same profile:
 
@@ -190,6 +261,7 @@ generic 404, because they are the two most common paste mistakes.
 
 | Endpoint | Purpose |
 |---|---|
+| `POST /v1/profiles` | Batch lookup; see above. |
 | `GET /v1/health` | Liveness, mode, session state, cache size. **Never calls LinkedIn.** |
 | `POST /v1/session/check` | Deliberately probe the session. Costs one upstream request. |
 | `GET /v1/fixtures` | List bundled sample profiles. |
@@ -211,6 +283,7 @@ eventually causes the outage it exists to detect.
 | `invalid_profile_url` | 400 | Not a member profile URL. |
 | `profile_not_found` | 404 | No such profile. |
 | `fixture_not_found` | 404 | Fixture mode, unknown sample. |
+| `batch_too_large` | 413 | More URLs than `MAX_BATCH_SIZE`. |
 | `rate_limited` | 429 | LinkedIn is refusing this IP or session. |
 | `session_missing` / `session_malformed` | 503 | Not configured, or a bad paste. |
 | `session_expired` | 503 | Cookie was valid, no longer is. |
@@ -611,7 +684,7 @@ app/
   cache.py       TTL cache
   errors.py      Typed errors with remediation text
   fixtures/      Synthetic Voyager payload for offline demos
-tests/           93 tests, no network required
+tests/           110 tests, no network required
 ```
 
 ## License

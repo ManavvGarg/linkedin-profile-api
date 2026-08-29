@@ -21,7 +21,7 @@ wrong (see README "Schema design"):
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -286,6 +286,35 @@ class ProfileResponse(BaseModel):
     )
     warnings: list[str] = Field(default_factory=list)
     profile: Profile
+
+
+class BatchItem(BaseModel):
+    """One entry in a batch response.
+
+    Each URL succeeds or fails independently: a single dead profile, or one
+    rate-limit rejection, must not discard the profiles that did resolve. The
+    per-item `status` is what callers branch on.
+    """
+
+    url: str = Field(description="The URL as supplied by the caller.")
+    status: Literal["ok", "error"]
+    result: ProfileResponse | None = Field(
+        default=None, description="Populated when status is 'ok'."
+    )
+    error: dict[str, Any] | None = Field(
+        default=None, description="Populated when status is 'error'; same shape as a 4xx/5xx body."
+    )
+
+
+class BatchResponse(BaseModel):
+    """Response for POST /v1/profiles."""
+
+    schema_version: str = "1.0"
+    requested: int
+    succeeded: int
+    failed: int
+    duration_ms: int
+    results: list[BatchItem]
 
 
 class HealthResponse(BaseModel):

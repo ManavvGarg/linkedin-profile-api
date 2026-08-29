@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     # keep every lookup to a single upstream call.
     backfill_empty_sections: bool = True
 
+    # Batch cap. Lookups are sequential and throttled, so a batch costs roughly
+    # (size x seconds-per-profile). Ten keeps a cold batch inside the ~60s
+    # request timeout most proxies impose; raise it only if yours allows longer.
+    max_batch_size: int = 10
+
+    # Whether callers may pass their own li_at in the request body. Off is the
+    # safer posture for a shared deployment; on lets each caller spend their own
+    # rate budget instead of the server's.
+    allow_session_override: bool = True
+
     # Guest fallback. Off by default: the guest path returns asterisk-masked
     # data and burns an IP-wide, multi-hour block after ~5 requests, so it is
     # only worth enabling when partial data genuinely beats no data.

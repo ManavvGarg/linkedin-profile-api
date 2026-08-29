@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import time
@@ -18,6 +19,8 @@ from .errors import (
 )
 from .guest import fetch_guest_profile
 from .models import (
+    BatchItem,
+    BatchResponse,
     Profile,
     ProfileResponse,
     RequestMeta,
@@ -116,6 +119,33 @@ class ProfileService:
             return SessionState.UNKNOWN
         return self._client.check_session()
 
+    # --- session selection --------------------------------------------------
+
+    def _client_for(self, session_cookie: str | None) -> tuple[VoyagerClient, str]:
+        """Pick the Voyager client to use, and the cache namespace it owns.
+
+        A caller may supply their own `li_at` per request. That makes the cache
+        namespace load-bearing rather than cosmetic: what a session can see
+        depends on who it is — connection degree changes which fields LinkedIn
+        returns — so serving one account's cached profile to a request made with
+        a different cookie would be both wrong and a privacy leak. Each
+        credential therefore gets its own namespace, keyed by a hash so the
+        cookie itself is never used as a key or written to a log.
+        """
+        if not session_cookie:
+            if self._client is None:
+                raise SessionMissing(
+                    "No LinkedIn session is configured. Set LINKEDIN_LI_AT, or supply "
+                    "session_cookie in the request body."
+                )
+            return self._client, "env"
+
+        # Build an ephemeral session; never mutate the shared one.
+        overridden = self._settings.model_copy(update={"linkedin_li_at": session_cookie})
+        session = LinkedInSession.from_settings(overridden)
+        fingerprint = hashlib.sha256(session.li_at.encode()).hexdigest()[:12]
+        return VoyagerClient(session, overridden), f"req-{fingerprint}"
+
     # --- main entry point ---------------------------------------------------
 
     def get_profile(
@@ -124,12 +154,21 @@ class ProfileService:
         *,
         refresh: bool = False,
         allow_guest: bool | None = None,
+        session_cookie: str | None = None,
     ) -> ProfileResponse:
         started = time.perf_counter()
         public_id = extract_public_id(url_or_id)
 
+        mode = self._settings.effective_mode
+        # Fixture mode never touches a session, so it shares one namespace.
+        namespace = "fixture" if mode == "fixture" else None
+        client: VoyagerClient | None = None
+        if namespace is None:
+            client, namespace = self._client_for(session_cookie)
+        cache_key = f"{namespace}:{public_id}"
+
         if not refresh:
-            if entry := self._cache.get(public_id):
+            if entry := self._cache.get(cache_key):
                 cached = entry.value.model_copy(deep=True)
                 cached.request.cached = True
                 cached.request.cache_age_seconds = entry.age_seconds
@@ -137,34 +176,86 @@ class ProfileService:
                 cached.request.duration_ms = int((time.perf_counter() - started) * 1000)
                 return cached
 
-        mode = self._settings.effective_mode
         if mode == "fixture":
             response = self._from_fixture(public_id, url_or_id)
         else:
             response = self._from_live(
                 public_id,
                 url_or_id,
+                client=client,  # type: ignore[arg-type]
                 allow_guest=(
                     self._settings.enable_guest_fallback if allow_guest is None else allow_guest
                 ),
             )
 
         response.request.duration_ms = int((time.perf_counter() - started) * 1000)
-        self._cache.set(public_id, response)
+        self._cache.set(cache_key, response)
         return response
+
+    def get_profiles(
+        self,
+        urls: list[str],
+        *,
+        refresh: bool = False,
+        allow_guest: bool | None = None,
+        session_cookie: str | None = None,
+    ) -> BatchResponse:
+        """Resolve several profiles in one call.
+
+        Deliberately sequential. Concurrency here would multiply the request
+        rate against the one resource that is genuinely scarce, and the throttle
+        between upstream calls exists precisely to avoid the burst pattern that
+        gets sessions restricted. Batching is a convenience for the caller, not
+        a way to go faster.
+
+        Duplicate URLs are resolved once — the second occurrence is a cache hit,
+        which is why the cache is what makes this endpoint safe to expose.
+        """
+        started = time.perf_counter()
+        results: list[BatchItem] = []
+
+        for url in urls:
+            try:
+                response = self.get_profile(
+                    url,
+                    refresh=refresh,
+                    allow_guest=allow_guest,
+                    session_cookie=session_cookie,
+                )
+                results.append(BatchItem(url=url, status="ok", result=response))
+            except ProfileAPIError as exc:
+                results.append(BatchItem(url=url, status="error", error=exc.to_payload()["error"]))
+            except Exception as exc:  # never let one bad URL discard the batch
+                logger.exception("Unexpected failure for %s", url)
+                results.append(
+                    BatchItem(
+                        url=url,
+                        status="error",
+                        error={"code": "internal_error", "message": str(exc)},
+                    )
+                )
+
+        succeeded = sum(1 for r in results if r.status == "ok")
+        return BatchResponse(
+            requested=len(urls),
+            succeeded=succeeded,
+            failed=len(results) - succeeded,
+            duration_ms=int((time.perf_counter() - started) * 1000),
+            results=results,
+        )
 
     # --- sources ------------------------------------------------------------
 
     def _from_live(
-        self, public_id: str, requested_url: str, *, allow_guest: bool
+        self,
+        public_id: str,
+        requested_url: str,
+        *,
+        client: VoyagerClient,
+        allow_guest: bool,
     ) -> ProfileResponse:
-        if self._client is None:
-            raise SessionMissing(
-                "No usable LinkedIn session is configured, so live lookups are unavailable."
-            )
-
         try:
-            voyager = self._client.fetch_profile(public_id)
+            voyager = client.fetch_profile(public_id)
         except ProfileAPIError as exc:
             if not allow_guest:
                 raise
@@ -185,7 +276,7 @@ class ProfileService:
             urn = _profile_urn(voyager.payload)
             if urn:
                 for section in gaps:
-                    payload = self._client.fetch_section(urn, section, public_id=public_id)
+                    payload = client.fetch_section(urn, section, public_id=public_id)
                     if payload is None:
                         warnings.append(f"Could not retrieve the {section} section.")
                     elif warning := merge_section(profile, section, payload):

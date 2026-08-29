@@ -47,6 +47,17 @@ class ProfileAPIError(Exception):
 # --- Input -----------------------------------------------------------------
 
 
+class BatchTooLarge(ProfileAPIError):
+    status_code = 413
+    code = "batch_too_large"
+    remediation = (
+        "Split the request into smaller batches. The cap exists because lookups are "
+        "sequential and rate-limited upstream, so a large batch would exceed typical "
+        "HTTP timeouts long before it finished. Raise MAX_BATCH_SIZE if your "
+        "deployment tolerates longer requests."
+    )
+
+
 class InvalidProfileURL(ProfileAPIError):
     status_code = 400
     code = "invalid_profile_url"
